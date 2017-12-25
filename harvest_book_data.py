@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from lxml import html
+import json
 import requests
 import sys
 
@@ -20,11 +21,13 @@ def get_data_from_book_info (book_data, response, field_name):
 
 def get_abstract (book_data, response):
     tree = html.fromstring(response.content)
-    link = tree.xpath('//div[@class="news"]//a[@title="Prüfung der Lieferbarkeit bei buchhandel.de"]/@href')
-    if (len(link) > 0):
-        page = requests.get(link[0])
+    link = tree.xpath('//strong[text() = "EAN"]/../..')
+    if (len(link) > 0 and len(link[0]) > 1):
+        url = "https://www.buchhandel.de/jsonapi/productDetails/" + link[0][1].text.strip()
+        page = requests.get(url)
+        result = json.loads(page.text)
         tree = html.fromstring(page.content)
-        abstract_txt = tree.xpath('//label[substring(text(),1,17) = "Hauptbeschreibung"]')
+        abstract_txt = tree.xpath('//label[matches(text(),"")]')
         print(abstract_txt)
         if(len(abstract_txt) > 0):
             book_data["abstract"]=abstract_txt[0]
