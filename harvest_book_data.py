@@ -5,10 +5,18 @@ from lxml import html
 import json
 import requests
 import sys
+import re
+from bs4 import BeautifulSoup
+
+def cleanhtml(raw_html):
+  cleanr = re.compile('<.*?>')
+  cleantext = re.sub(cleanr, '', raw_html)
+  return cleantext
 
 BASE_URL_DNB = 'https://portal.dnb.de'
 
-QUERY_FORMAT_STRING = BASE_URL_DNB + '/opac.htm?method=simpleSearch&query={}'
+QUERY_FORMAT_STRING = BASE_URL_DNB + '/opac.htm?query={0}&method=simpleSearch&cqlMode=true'
+QUERY_FORMAT_STRING_2 = BASE_URL_DNB + '/opac.htm?method=showNextResultSite&cqlMode=true&currentResultId={0}%26any&currentPosition={1}'
 
 def get_data_from_book_info (book_data, response, field_name):
     tree = html.fromstring(response.content)
@@ -26,11 +34,22 @@ def get_abstract (book_data, response):
         url = "https://www.buchhandel.de/jsonapi/productDetails/" + link[0][1].text.strip()
         page = requests.get(url)
         result = json.loads(page.text)
-        tree = html.fromstring(page.content)
-        abstract_txt = tree.xpath('//label[matches(text(),"")]')
-        print(abstract_txt)
+
+        if('data' in result): 
+            lang = result['data']['attributes']['mainLanguages'][0];
+            numberOfAbstracts = len(result['data']['attributes']['mainDescriptions']);
+            if(numberOfAbstracts > 0 ):    
+                abstract_txt = result['data']['attributes']['mainDescriptions'][0]['description']
+        else:
+            abstract_txt = ""
+            lang = ""
+
+        abstract_txt = cleanhtml(abstract_txt)
+        abstract_txt = BeautifulSoup(abstract_txt).get_text();
+        
         if(len(abstract_txt) > 0):
-            book_data["abstract"]=abstract_txt[0]
+            book_data["abstract"]=abstract_txt
+            book_data["lang"] = lang
         else:
             book_data["abstract"]=""
     else:
@@ -38,19 +57,35 @@ def get_abstract (book_data, response):
 
 if __name__ == "__main__":
     book_data = {}
-    query_string = QUERY_FORMAT_STRING.format("informatik")
+    currentPosition = 0;
+    query_string = QUERY_FORMAT_STRING.format("informatik+and+hsg%3D004");
+    file_handles = {};
+    hFile = open("book_data.json","w+");
+    while(True):
+        page = requests.get(query_string)
+        tree = html.fromstring(page.content)
 
-    page = requests.get(query_string)
-    tree = html.fromstring(page.content)
+        links = tree.xpath('//table[@id="searchresult"]//a/@href')
 
-    links = tree.xpath('//table[@id="searchresult"]//a/@href')
+        if(len(links) == 0):
+            break;
 
-    for link in links:
-        book_info_response = requests.get(BASE_URL_DNB + link)
-        get_data_from_book_info(book_data, book_info_response, "Titel")
-        get_data_from_book_info(book_data, book_info_response, "EAN")
+        for link in links:
+            book_info_response = requests.get(BASE_URL_DNB + link)
+            get_data_from_book_info(book_data, book_info_response, "Titel")
+            get_data_from_book_info(book_data, book_info_response, "EAN")
 
-        get_abstract(book_data, book_info_response)
+            get_abstract(book_data, book_info_response)
 
-        for v in book_data.values():             
-            print(v.encode('cp850', 'replace').decode('cp850'))
+            for v in book_data.values():             
+                print(v.encode('cp850', 'replace').decode('cp850'))
+            if(len(book_data["abstract"])>0):
+                if book_data["lang"] not in file_handles:
+                    file_handles[book_data["lang"]] = open("book_data_" + book_data["lang"] + ".json","w+");
+                hFile = file_handles[book_data["lang"]]
+                hFile.write(json.dumps(book_data))
+                
+            hFile.flush();
+
+        query_string = QUERY_FORMAT_STRING_2.format("informatik+and+hsg%3D004",str(currentPosition))
+        currentPosition += len(links);
